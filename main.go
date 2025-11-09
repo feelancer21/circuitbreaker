@@ -45,7 +45,7 @@ var (
 func extractPathArgs(ctx *cli.Context) (string, string, error) {
 	network := strings.ToLower(ctx.GlobalString("network"))
 	switch network {
-	case "mainnet", "testnet", "regtest", "simnet":
+	case "mainnet", "testnet", "regtest", "simnet", "signet", "testnet4":
 	default:
 		return "", "", fmt.Errorf("unknown network: %v", network)
 	}
