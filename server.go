@@ -1,4 +1,4 @@
-package main
+package circuitbreaker
 
 import (
 	"context"
@@ -12,6 +12,8 @@ import (
 	"github.com/lightningnetwork/lnd/routing/route"
 	"go.uber.org/zap"
 )
+
+var BuildVersion = "development"
 
 type server struct {
 	process *process

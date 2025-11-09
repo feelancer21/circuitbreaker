@@ -1,4 +1,4 @@
-package main
+package circuitbreaker
 
 import (
 	"context"
@@ -24,7 +24,7 @@ func setupTestDb(t *testing.T, fwdingHistoryLimit int) (*Db, func()) {
 
 func TestDb(t *testing.T) {
 	ctx := context.Background()
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	expectedDefaultLimit := Limit{

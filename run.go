@@ -1,29 +1,22 @@
-package main
+package circuitbreaker
 
 import (
 	"context"
 	"embed"
-	"errors"
 	"io/fs"
 	"net"
 	"net/http"
-	"os"
-	"os/signal"
-	"path/filepath"
-	"syscall"
 	"time"
 
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/lightningequipment/circuitbreaker/circuitbreakerrpc"
-	"github.com/urfave/cli"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
 )
-
-var errUserExit = errors.New("user requested termination")
 
 // maxGrpcMsgSize is used when we configure both server and clients to allow sending and
 // receiving at most 32 MB GRPC messages.
@@ -36,52 +29,58 @@ const maxGrpcMsgSize = 32 * 1024 * 1024
 //go:embed all:webui-build
 var content embed.FS
 
-func run(c *cli.Context) error {
-	ctx := context.Background()
+type RunConfig struct {
+	DbPath          string
+	FwdHistoryLimit int
+	LndStubFlag     bool
+	LndRpcServer    string
+	LndTlsCertPath  string
+	LndMacaroonPath string
+	Logger          *zap.SugaredLogger
+	GrpcListenAddr  string
+	HttpListenAddr  string
+}
 
-	confDir := c.String("configdir")
-	err := os.MkdirAll(confDir, os.ModePerm)
-	if err != nil {
-		return err
+// Run starts the main application logic using the provided configuration.
+func Run(ctx context.Context, c *RunConfig) error {
+	var logger *zap.SugaredLogger
+
+	// if no logger is provided, use default global one
+	if c.Logger == nil {
+		logger = log
+	} else {
+		logger = c.Logger
+		// overwrite global logger with provided one
+		log = c.Logger
 	}
-	dbPath := filepath.Join(confDir, dbFn)
+	logger.Infow("Opening database", "path", c.DbPath)
 
-	log.Infow("Circuit Breaker starting", "version", BuildVersion)
-
-	log.Infow("Opening database", "path", dbPath)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	// Open database.
-	db, err := NewDb(ctx, dbPath, c.Int("fwdhistorylimit"))
+	db, err := NewDb(ctx, c.DbPath, c.FwdHistoryLimit)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		err := db.Close()
 		if err != nil {
-			log.Errorw("Error closing db", "err", err)
+			logger.Errorw("Error closing db", "err", err)
 		}
 	}()
 
-	group, ctx := errgroup.WithContext(ctx)
-
-	stub := c.Bool(stubFlag.Name)
 	var client lndclient
-	if stub {
+	if c.LndStubFlag {
 		stubClient := newStubClient(ctx)
 
 		client = stubClient
 	} else {
-		// First, we'll parse the args from the command.
-		tlsCertPath, macPath, err := extractPathArgs(c)
-		if err != nil {
-			return err
-		}
-
 		lndCfg := LndConfig{
-			RpcServer:   c.GlobalString("rpcserver"),
-			TlsCertPath: tlsCertPath,
-			MacPath:     macPath,
-			Log:         log,
+			RpcServer:   c.LndRpcServer,
+			TlsCertPath: c.LndTlsCertPath,
+			MacPath:     c.LndMacaroonPath,
+			Log:         logger,
 		}
 
 		lndClient, err := NewLndClient(&lndCfg)
@@ -98,7 +97,7 @@ func run(c *cli.Context) error {
 		return err
 	}
 
-	p := NewProcess(client, log, limits, db)
+	p := NewProcess(client, logger, limits, db)
 
 	grpcServer := grpc.NewServer(
 		grpc.MaxRecvMsgSize(maxGrpcMsgSize),
@@ -108,14 +107,12 @@ func run(c *cli.Context) error {
 
 	reflection.Register(grpcServer)
 
-	server := NewServer(log, p, client, db)
+	server := NewServer(logger, p, client, db)
 
 	circuitbreakerrpc.RegisterServiceServer(
 		grpcServer, server,
 	)
-
-	listenAddress := c.String("listen")
-	grpcInternalListener, err := net.Listen("tcp", listenAddress)
+	grpcInternalListener, err := net.Listen("tcp", c.GrpcListenAddr)
 	if err != nil {
 		return err
 	}
@@ -124,7 +121,7 @@ func run(c *cli.Context) error {
 	// This is where the gRPC-Gateway proxies the requests
 	conn, err := grpc.DialContext(
 		ctx,
-		listenAddress,
+		c.GrpcListenAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(maxGrpcMsgSize),
@@ -144,7 +141,7 @@ func run(c *cli.Context) error {
 
 	serverRoot, err := fs.Sub(content, "webui-build")
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 
 	fs := http.FileServer(http.FS(serverRoot))
@@ -152,12 +149,13 @@ func run(c *cli.Context) error {
 	mux.Handle("/api/", http.StripPrefix("/api", gwmux))
 	mux.HandleFunc("/", fs.ServeHTTP)
 
-	httpListen := c.String(httpListenFlag.Name)
 	gwServer := &http.Server{
-		Addr:              httpListen,
+		Addr:              c.HttpListenAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: time.Second * 10,
 	}
+
+	group, ctx := errgroup.WithContext(ctx)
 
 	// Run circuitbreaker core.
 	group.Go(func() error {
@@ -166,10 +164,10 @@ func run(c *cli.Context) error {
 
 	// Run grpc server.
 	group.Go(func() error {
-		log.Infow("Grpc server starting", "listenAddress", listenAddress)
+		logger.Infow("Grpc server starting", "listenAddress", c.GrpcListenAddr)
 		err := grpcServer.Serve(grpcInternalListener)
 		if err != nil && err != grpc.ErrServerStopped {
-			log.Errorw("grpc server error", "err", err)
+			logger.Errorw("grpc server error", "err", err)
 		}
 
 		return err
@@ -177,7 +175,7 @@ func run(c *cli.Context) error {
 
 	// Run http server.
 	group.Go(func() error {
-		log.Infow("HTTP server starting", "listenAddress", httpListen)
+		logger.Infow("HTTP server starting", "listenAddress", c.HttpListenAddr)
 
 		return gwServer.ListenAndServe()
 	})
@@ -187,32 +185,17 @@ func run(c *cli.Context) error {
 		<-ctx.Done()
 
 		// Stop http server.
-		log.Infof("Stopping http server")
+		logger.Infof("Stopping http server")
 		err := gwServer.Shutdown(context.Background()) //nolint:contextcheck
 		if err != nil {
-			log.Errorw("Error shutting down http server", "err", err)
+			logger.Errorw("Error shutting down http server", "err", err)
 		}
 
 		// Stop grpc server.
-		log.Infof("Stopping grpc server")
+		logger.Infof("Stopping grpc server")
 		grpcServer.Stop()
 
 		return nil
-	})
-
-	group.Go(func() error {
-		log.Infof("Press ctrl-c to exit")
-
-		sigint := make(chan os.Signal, 1)
-		signal.Notify(sigint, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
-
-		select {
-		case <-sigint:
-			return errUserExit
-
-		case <-ctx.Done():
-			return nil
-		}
 	})
 
 	return group.Wait()

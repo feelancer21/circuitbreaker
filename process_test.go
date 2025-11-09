@@ -1,4 +1,4 @@
-package main
+package circuitbreaker
 
 import (
 	"context"
@@ -37,7 +37,7 @@ func testProcess(t *testing.T, event resolveEvent) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	log := zaptest.NewLogger(t).Sugar()
@@ -114,7 +114,7 @@ func TestLimits(t *testing.T) {
 func testRateLimit(t *testing.T, mode Mode) {
 	defer Timeout()()
 
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	cfg := &Limits{
@@ -204,7 +204,7 @@ func testRateLimit(t *testing.T, mode Mode) {
 func testMaxPending(t *testing.T, mode Mode) {
 	defer Timeout()()
 
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	cfg := &Limits{
@@ -283,7 +283,7 @@ func TestNewPeer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	log := zaptest.NewLogger(t).Sugar()
@@ -323,7 +323,7 @@ func TestNewPeer(t *testing.T) {
 func TestBlocked(t *testing.T) {
 	defer Timeout()()
 
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	cfg := &Limits{
@@ -375,7 +375,7 @@ func TestChannelNotFound(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	log := zaptest.NewLogger(t).Sugar()
@@ -459,7 +459,7 @@ func testLookupOutgoingChannel(t *testing.T, settled, outgoingFound bool,
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	log := zaptest.NewLogger(t).Sugar()
@@ -529,7 +529,7 @@ func TestClosedChannelHtlc(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	log := zaptest.NewLogger(t).Sugar()
