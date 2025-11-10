@@ -560,3 +560,55 @@ func TestClosedChannelHtlc(t *testing.T) {
 	cancel()
 	require.ErrorIs(t, <-exit, context.Canceled)
 }
+
+// TestPreProcessorReject tests that the PreProcessor can reject HTLCs.
+func TestPreProcessorReject(t *testing.T) {
+	defer Timeout()()
+
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
+	defer cleanup()
+
+	cfg := &Limits{
+		Default: Limit{
+			MaxHourlyRate: 3600, // High enough to not trigger rate limit
+			MaxPending:    10,   // High enough to not trigger pending limit
+			Mode:          ModeFail,
+		},
+	}
+
+	client := newLndclientMock(testChannels, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	log := zaptest.NewLogger(t).Sugar()
+
+	// Create a PreProcessor that rejects all HTLCs
+	rejectingPreProcessor := func(nodePub route.Vertex) PreProcessor {
+		return func(ctx context.Context, event InterceptEvent) bool {
+			// Reject all HTLCs
+			return false
+		}
+	}
+
+	p := NewProcess(client, log, cfg, db, rejectingPreProcessor)
+
+	exit := make(chan error)
+	go func() {
+		exit <- p.Run(ctx)
+	}()
+
+	key := circuitKey{
+		channel: 2,
+		htlc:    5,
+	}
+	client.htlcInterceptorRequests <- &interceptedEvent{
+		circuitKey: key,
+	}
+
+	// HTLC should be rejected by the PreProcessor
+	resp := <-client.htlcInterceptorResponses
+	require.False(t, resp.resume)
+
+	cancel()
+	require.ErrorIs(t, <-exit, context.Canceled)
+}

@@ -298,6 +298,16 @@ func (p *peerController) run(ctx context.Context) error {
 				continue
 			}
 
+			// Call the preprocessor. If it rejects the HTLC, fail it immediately.
+			if !p.preProcessor(ctx, event) {
+				logger.Infow("HTLC rejected by preprocessor")
+				if err := event.resume(false); err != nil {
+					return err
+				}
+				p.incrCounter(eventReject)
+				continue
+			}
+
 			mode := p.cfg.Mode
 
 			switch {

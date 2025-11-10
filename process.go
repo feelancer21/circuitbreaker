@@ -45,10 +45,39 @@ type circuitKey struct {
 
 type interceptEvent struct {
 	circuitKey
-	incomingMsat lnwire.MilliSatoshi
-	outgoingMsat lnwire.MilliSatoshi
-	resume       func(bool) error
+	incomingMsat    lnwire.MilliSatoshi
+	outgoingMsat    lnwire.MilliSatoshi
+	outgoingReqChan uint64
+	paymentHash     []byte
+	resume          func(bool) error
 }
+
+func (e interceptEvent) GetIncomingChanID() uint64 {
+	return e.channel
+}
+
+func (e interceptEvent) GetIncomingHtlcId() uint64 {
+	return e.htlc
+}
+
+func (e interceptEvent) GetIncomingMsat() uint64 {
+	return uint64(e.incomingMsat)
+}
+
+func (e interceptEvent) GetOutgoingReqChanID() uint64 {
+	return e.outgoingReqChan
+}
+
+func (e interceptEvent) GetOutgoingMsat() uint64 {
+	return uint64(e.outgoingMsat)
+}
+
+func (e interceptEvent) GetPaymentHash() []byte {
+	return e.paymentHash
+}
+
+// compile time check that interceptEvent implements InterceptEvent interface.
+var _ InterceptEvent = (*interceptEvent)(nil)
 
 type resolvedEvent struct {
 	incomingCircuitKey circuitKey
@@ -514,10 +543,12 @@ func (p *process) processInterceptor(ctx context.Context,
 
 		select {
 		case p.interceptChan <- interceptEvent{
-			circuitKey:   key,
-			incomingMsat: event.incomingMsat,
-			outgoingMsat: event.outgoingMsat,
-			resume:       resume,
+			circuitKey:      key,
+			incomingMsat:    event.incomingMsat,
+			outgoingMsat:    event.outgoingMsat,
+			outgoingReqChan: event.outgoingReqChan,
+			paymentHash:     event.paymentHash,
+			resume:          resume,
 		}:
 
 		case <-ctx.Done():

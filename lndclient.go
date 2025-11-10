@@ -105,9 +105,11 @@ type lndHtlcInterceptorClient struct {
 }
 
 type interceptedEvent struct {
-	circuitKey   circuitKey
-	incomingMsat lnwire.MilliSatoshi
-	outgoingMsat lnwire.MilliSatoshi
+	circuitKey      circuitKey
+	incomingMsat    lnwire.MilliSatoshi
+	outgoingMsat    lnwire.MilliSatoshi
+	outgoingReqChan uint64
+	paymentHash     []byte
 }
 
 func (h *lndHtlcInterceptorClient) recv() (*interceptedEvent, error) {
@@ -121,8 +123,10 @@ func (h *lndHtlcInterceptorClient) recv() (*interceptedEvent, error) {
 			channel: event.IncomingCircuitKey.ChanId,
 			htlc:    event.IncomingCircuitKey.HtlcId,
 		},
-		incomingMsat: lnwire.MilliSatoshi(event.IncomingAmountMsat),
-		outgoingMsat: lnwire.MilliSatoshi(event.OutgoingAmountMsat),
+		incomingMsat:    lnwire.MilliSatoshi(event.IncomingAmountMsat),
+		outgoingMsat:    lnwire.MilliSatoshi(event.OutgoingAmountMsat),
+		outgoingReqChan: event.OutgoingRequestedChanId,
+		paymentHash:     event.PaymentHash,
 	}, nil
 }
 
