@@ -88,9 +88,13 @@ type process struct {
 
 	// Testing hook
 	resolvedCallback func()
+
+	getPreProcessor PreProcessorFactory
 }
 
-func NewProcess(client lndclient, log *zap.SugaredLogger, limits *Limits, db *Db) *process {
+func NewProcess(client lndclient, log *zap.SugaredLogger, limits *Limits, db *Db,
+	getPreProcessor PreProcessorFactory) *process {
+
 	return &process{
 		db:                      db,
 		log:                     log,
@@ -106,6 +110,7 @@ func NewProcess(client lndclient, log *zap.SugaredLogger, limits *Limits, db *Db
 		limits:                  limits,
 		burstSize:               burstSize,
 		peerRefreshInterval:     defaultPeerRefreshInterval,
+		getPreProcessor:         getPreProcessor,
 	}
 }
 
@@ -272,6 +277,7 @@ func (p *process) createPeerController(ctx context.Context, peer route.Vertex,
 
 			return p.db.RecordHtlcResolution(ctx, htlc)
 		},
+		preProcessor: p.getPreProcessor(peer),
 	}
 	ctrl := newPeerController(cfg)
 

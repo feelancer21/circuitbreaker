@@ -39,18 +39,19 @@ type RunConfig struct {
 	Logger          *zap.SugaredLogger
 	GrpcListenAddr  string
 	HttpListenAddr  string
+	GetPreProcessor PreProcessorFactory
 }
 
 // Run starts the main application logic using the provided configuration.
 func Run(ctx context.Context, c *RunConfig) error {
 	var logger *zap.SugaredLogger
 
-	// if no logger is provided, use default global one
+	// If no logger is provided, use default global one
 	if c.Logger == nil {
 		logger = log
 	} else {
 		logger = c.Logger
-		// overwrite global logger with provided one
+		// Overwrite global logger with provided one
 		log = c.Logger
 	}
 	logger.Infow("Opening database", "path", c.DbPath)
@@ -97,7 +98,11 @@ func Run(ctx context.Context, c *RunConfig) error {
 		return err
 	}
 
-	p := NewProcess(client, logger, limits, db)
+	factory := c.GetPreProcessor
+	if factory == nil {
+		factory = DefaultPreProcessorFactory
+	}
+	p := NewProcess(client, logger, limits, db, factory)
 
 	grpcServer := grpc.NewServer(
 		grpc.MaxRecvMsgSize(maxGrpcMsgSize),

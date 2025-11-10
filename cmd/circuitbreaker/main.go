@@ -193,6 +193,7 @@ func run(c *cli.Context) error {
 		LndStubFlag:     c.Bool(stubFlag.Name),
 		GrpcListenAddr:  c.String("listen"),
 		HttpListenAddr:  c.String(httpListenFlag.Name),
+		GetPreProcessor: cb.DefaultPreProcessorFactory,
 	}
 
 	confDir := c.String("configdir")

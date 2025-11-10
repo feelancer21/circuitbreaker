@@ -72,6 +72,8 @@ type peerController struct {
 	lnd             lndclient
 	now             func() time.Time
 	htlcCompleted   func(context.Context, *HtlcInfo) error
+
+	preProcessor PreProcessor
 }
 
 type inFlightHtlc struct {
@@ -112,6 +114,7 @@ type peerControllerCfg struct {
 	pubKey        route.Vertex
 	now           func() time.Time
 	htlcCompleted func(context.Context, *HtlcInfo) error
+	preProcessor  PreProcessor
 }
 
 func newPeerController(cfg *peerControllerCfg) *peerController {
@@ -152,6 +155,7 @@ func newPeerController(cfg *peerControllerCfg) *peerController {
 		lastChannelSync: cfg.now(),
 		now:             cfg.now,
 		htlcCompleted:   cfg.htlcCompleted,
+		preProcessor:    cfg.preProcessor,
 	}
 }
 
