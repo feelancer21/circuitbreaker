@@ -121,6 +121,8 @@ func Run(ctx context.Context, c *RunConfig) error {
 	if err != nil {
 		return err
 	}
+	// Clean up listener if we exit before grpc server starts.
+	defer grpcInternalListener.Close()
 
 	// Create a client connection to the gRPC server we just started
 	// This is where the gRPC-Gateway proxies the requests
@@ -135,6 +137,11 @@ func Run(ctx context.Context, c *RunConfig) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err := conn.Close(); err != nil {
+			logger.Errorw("Error closing grpc client connection", "err", err)
+		}
+	}()
 
 	// Create http server.
 	gwmux := runtime.NewServeMux()
