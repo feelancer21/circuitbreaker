@@ -1,4 +1,4 @@
-package main
+package circuitbreaker
 
 import (
 	"context"
@@ -78,14 +78,14 @@ var migrations = &migrate.MemoryMigrationSource{
 }
 
 const (
-	// defaultFwdHistoryLimit is the default limit we place on the forwarding_history table
+	// DefaultFwdHistoryLimit is the default limit we place on the forwarding_history table
 	// to prevent creation of an ever-growing table.
 	//
 	// Justification for value:
 	// * ~130 bytes per row in the table.
 	// * Help ourselves to 14MB of disk space
 	// -> 100_000 entries = 13 MB, plus ~0.8MB for add_time_index.
-	defaultFwdHistoryLimit = 100_000
+	DefaultFwdHistoryLimit = 100_000
 )
 
 var defaultNodeKey = route.Vertex{}

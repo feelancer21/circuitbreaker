@@ -1,4 +1,4 @@
-package main
+package circuitbreaker
 
 import (
 	"container/list"
@@ -72,6 +72,8 @@ type peerController struct {
 	lnd             lndclient
 	now             func() time.Time
 	htlcCompleted   func(context.Context, *HtlcInfo) error
+
+	preProcessor PreProcessor
 }
 
 type inFlightHtlc struct {
@@ -112,6 +114,7 @@ type peerControllerCfg struct {
 	pubKey        route.Vertex
 	now           func() time.Time
 	htlcCompleted func(context.Context, *HtlcInfo) error
+	preProcessor  PreProcessor
 }
 
 func newPeerController(cfg *peerControllerCfg) *peerController {
@@ -152,6 +155,7 @@ func newPeerController(cfg *peerControllerCfg) *peerController {
 		lastChannelSync: cfg.now(),
 		now:             cfg.now,
 		htlcCompleted:   cfg.htlcCompleted,
+		preProcessor:    cfg.preProcessor,
 	}
 }
 
@@ -291,6 +295,16 @@ func (p *peerController) run(ctx context.Context) error {
 
 				logger.Infow("Replay")
 
+				continue
+			}
+
+			// Call the preprocessor. If it rejects the HTLC, fail it immediately.
+			if !p.preProcessor(ctx, event) {
+				logger.Infow("HTLC rejected by preprocessor")
+				if err := event.resume(false); err != nil {
+					return err
+				}
+				p.incrCounter(eventReject)
 				continue
 			}
 

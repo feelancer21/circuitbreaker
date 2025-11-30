@@ -1,4 +1,4 @@
-package main
+package circuitbreaker
 
 import (
 	"context"
@@ -37,7 +37,7 @@ func testProcess(t *testing.T, event resolveEvent) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	log := zaptest.NewLogger(t).Sugar()
@@ -55,7 +55,7 @@ func testProcess(t *testing.T, event resolveEvent) {
 		},
 	}
 
-	p := NewProcess(client, log, cfg, db)
+	p := NewProcess(client, log, cfg, db, DefaultPreProcessorFactory)
 
 	resolved := make(chan struct{})
 	p.resolvedCallback = func() {
@@ -114,7 +114,7 @@ func TestLimits(t *testing.T) {
 func testRateLimit(t *testing.T, mode Mode) {
 	defer Timeout()()
 
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	cfg := &Limits{
@@ -136,7 +136,7 @@ func testRateLimit(t *testing.T, mode Mode) {
 
 	log := zaptest.NewLogger(t).Sugar()
 
-	p := NewProcess(client, log, cfg, db)
+	p := NewProcess(client, log, cfg, db, DefaultPreProcessorFactory)
 	p.burstSize = 2
 
 	exit := make(chan error)
@@ -204,7 +204,7 @@ func testRateLimit(t *testing.T, mode Mode) {
 func testMaxPending(t *testing.T, mode Mode) {
 	defer Timeout()()
 
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	cfg := &Limits{
@@ -228,7 +228,7 @@ func testMaxPending(t *testing.T, mode Mode) {
 
 	log := zaptest.NewLogger(t).Sugar()
 
-	p := NewProcess(client, log, cfg, db)
+	p := NewProcess(client, log, cfg, db, DefaultPreProcessorFactory)
 	p.burstSize = 2
 
 	exit := make(chan error)
@@ -283,14 +283,14 @@ func TestNewPeer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	log := zaptest.NewLogger(t).Sugar()
 
 	cfg := &Limits{}
 
-	p := NewProcess(client, log, cfg, db)
+	p := NewProcess(client, log, cfg, db, DefaultPreProcessorFactory)
 
 	// Setup quick peer refresh.
 	p.peerRefreshInterval = 100 * time.Millisecond
@@ -323,7 +323,7 @@ func TestNewPeer(t *testing.T) {
 func TestBlocked(t *testing.T) {
 	defer Timeout()()
 
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	cfg := &Limits{
@@ -341,7 +341,7 @@ func TestBlocked(t *testing.T) {
 
 	log := zaptest.NewLogger(t).Sugar()
 
-	p := NewProcess(client, log, cfg, db)
+	p := NewProcess(client, log, cfg, db, DefaultPreProcessorFactory)
 
 	exit := make(chan error)
 	go func() {
@@ -375,14 +375,14 @@ func TestChannelNotFound(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	log := zaptest.NewLogger(t).Sugar()
 
 	cfg := &Limits{}
 
-	p := NewProcess(client, log, cfg, db)
+	p := NewProcess(client, log, cfg, db, DefaultPreProcessorFactory)
 
 	exit := make(chan error)
 
@@ -459,14 +459,14 @@ func testLookupOutgoingChannel(t *testing.T, settled, outgoingFound bool,
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	log := zaptest.NewLogger(t).Sugar()
 
 	cfg := &Limits{}
 
-	p := NewProcess(client, log, cfg, db)
+	p := NewProcess(client, log, cfg, db, DefaultPreProcessorFactory)
 
 	resolved := make(chan struct{})
 	p.resolvedCallback = func() {
@@ -529,14 +529,14 @@ func TestClosedChannelHtlc(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	db, cleanup := setupTestDb(t, defaultFwdHistoryLimit)
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
 	defer cleanup()
 
 	log := zaptest.NewLogger(t).Sugar()
 
 	cfg := &Limits{}
 
-	p := NewProcess(client, log, cfg, db)
+	p := NewProcess(client, log, cfg, db, DefaultPreProcessorFactory)
 
 	exit := make(chan error)
 
@@ -556,6 +556,58 @@ func TestClosedChannelHtlc(t *testing.T) {
 
 	resp := <-client.htlcInterceptorResponses
 	require.Equal(t, key, resp.key)
+
+	cancel()
+	require.ErrorIs(t, <-exit, context.Canceled)
+}
+
+// TestPreProcessorReject tests that the PreProcessor can reject HTLCs.
+func TestPreProcessorReject(t *testing.T) {
+	defer Timeout()()
+
+	db, cleanup := setupTestDb(t, DefaultFwdHistoryLimit)
+	defer cleanup()
+
+	cfg := &Limits{
+		Default: Limit{
+			MaxHourlyRate: 3600, // High enough to not trigger rate limit
+			MaxPending:    10,   // High enough to not trigger pending limit
+			Mode:          ModeFail,
+		},
+	}
+
+	client := newLndclientMock(testChannels, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	log := zaptest.NewLogger(t).Sugar()
+
+	// Create a PreProcessor that rejects all HTLCs
+	rejectingPreProcessor := func(nodePub route.Vertex) PreProcessor {
+		return func(ctx context.Context, event InterceptEvent) bool {
+			// Reject all HTLCs
+			return false
+		}
+	}
+
+	p := NewProcess(client, log, cfg, db, rejectingPreProcessor)
+
+	exit := make(chan error)
+	go func() {
+		exit <- p.Run(ctx)
+	}()
+
+	key := circuitKey{
+		channel: 2,
+		htlc:    5,
+	}
+	client.htlcInterceptorRequests <- &interceptedEvent{
+		circuitKey: key,
+	}
+
+	// HTLC should be rejected by the PreProcessor
+	resp := <-client.htlcInterceptorResponses
+	require.False(t, resp.resume)
 
 	cancel()
 	require.ErrorIs(t, <-exit, context.Canceled)

@@ -1,14 +1,20 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"os/user"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/btcsuite/btcd/btcutil"
+	cb "github.com/lightningequipment/circuitbreaker"
 	"github.com/urfave/cli"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -38,6 +44,8 @@ var (
 		Name:  "stub",
 		Usage: "set to enable stub mode (no lnd instance connected)",
 	}
+
+	errUserExit = errors.New("user requested termination")
 )
 
 // extractPathArgs parses the TLS certificate and macaroon paths from the
@@ -45,7 +53,7 @@ var (
 func extractPathArgs(ctx *cli.Context) (string, string, error) {
 	network := strings.ToLower(ctx.GlobalString("network"))
 	switch network {
-	case "mainnet", "testnet", "regtest", "simnet":
+	case "mainnet", "testnet", "regtest", "simnet", "signet", "testnet4":
 	default:
 		return "", "", fmt.Errorf("unknown network: %v", network)
 	}
@@ -85,14 +93,12 @@ func extractPathArgs(ctx *cli.Context) (string, string, error) {
 	return tlsCertPath, macPath, nil
 }
 
-var BuildVersion = "development"
-
 func main() {
 	defaultAppDir := btcutil.AppDataDir("circuitbreaker", false)
 
 	app := cli.NewApp()
 	app.Name = "circuitbreakerd"
-	app.Version = BuildVersion
+	app.Version = cb.BuildVersion
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:  "rpcserver",
@@ -132,7 +138,7 @@ func main() {
 		cli.Uint64Flag{
 			Name:  "fwdhistorylimit",
 			Usage: "limit the number of htlc forwards that are persisted",
-			Value: defaultFwdHistoryLimit,
+			Value: cb.DefaultFwdHistoryLimit,
 		},
 		httpListenFlag,
 		stubFlag,
@@ -174,4 +180,59 @@ func cleanAndExpandPath(path string) string {
 	// NOTE: The os.ExpandEnv doesn't work with Windows-style %VARIABLE%,
 	// but the variables can still be expanded via POSIX-style $VARIABLE.
 	return filepath.Clean(os.ExpandEnv(path))
+}
+
+// run is the main entry point for the circuitbreaker application from the CLI.
+// It parses the configuration and starts the main application.
+func run(c *cli.Context) error {
+	log.Infow("Circuit Breaker starting", "version", cb.BuildVersion)
+	log.Sync()
+
+	cfg := cb.RunConfig{
+		FwdHistoryLimit: c.Int("fwdhistorylimit"),
+		LndStubFlag:     c.Bool(stubFlag.Name),
+		GrpcListenAddr:  c.String("listen"),
+		HttpListenAddr:  c.String(httpListenFlag.Name),
+		GetPreProcessor: cb.DefaultPreProcessorFactory,
+	}
+
+	confDir := c.String("configdir")
+	err := os.MkdirAll(confDir, os.ModePerm)
+	if err != nil {
+		return err
+	}
+	cfg.DbPath = filepath.Join(confDir, dbFn)
+
+	if !cfg.LndStubFlag {
+		// First, we'll parse the args from the command.
+		cfg.LndTlsCertPath, cfg.LndMacaroonPath, err = extractPathArgs(c)
+		if err != nil {
+			return err
+		}
+		cfg.LndRpcServer = c.GlobalString("rpcserver")
+	}
+
+	group, ctx := errgroup.WithContext(context.Background())
+
+	// Run main application.
+	group.Go(func() error {
+		return cb.Run(ctx, &cfg)
+	})
+
+	group.Go(func() error {
+		log.Infof("Press ctrl-c to exit")
+
+		sigint := make(chan os.Signal, 1)
+		signal.Notify(sigint, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+
+		select {
+		case <-sigint:
+			return errUserExit
+
+		case <-ctx.Done():
+			return nil
+		}
+	})
+
+	return group.Wait()
 }

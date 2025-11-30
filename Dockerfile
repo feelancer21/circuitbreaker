@@ -15,9 +15,10 @@ WORKDIR /src
 
 COPY *.go go.mod go.sum ./
 COPY circuitbreakerrpc circuitbreakerrpc/
+COPY cmd cmd/
 COPY --from=build_frontend /webui-build/ webui-build/
 
-RUN go install -ldflags "-X main.BuildVersion=$BUILD_VERSION"
+RUN go install -ldflags "-X github.com/lightningequipment/circuitbreaker.BuildVersion=$BUILD_VERSION" ./cmd/circuitbreaker/
 
 ### Build an Alpine image
 FROM alpine:3.16 as alpine
